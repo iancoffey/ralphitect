@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "feature_name": { "type": "string" },
+    "objective": { "type": "string" },
+    "user_stories": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "technical_constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Must include language, frameworks, and existing architectural patterns."
+    },
+    "api_contract": {
+      "type": "string",
+      "description": "Rough draft of JSON payloads or function signatures."
+    },
+    "definition_of_done": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["feature_name", "objective", "technical_constraints", "definition_of_done"]
+}
