@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ===================================================
-# 🛡️  RALPH ARCHITECT: COMPATIBLE GATEKEEPER
+# 🛡️  RALPH ARCHITECT: THE ADVISOR (Soft-Block)
 # ===================================================
 
 # Configuration
@@ -16,8 +16,7 @@ if [ -z "$1" ]; then
 fi
 
 CONTEXT_DIR="$1"
-# Remove trailing slash safely
-CONTEXT_DIR=${CONTEXT_DIR%/}
+CONTEXT_DIR=${CONTEXT_DIR%/} # Remove trailing slash
 
 if [ ! -d "$CONTEXT_DIR" ]; then
     echo "❌ Error: Directory '$CONTEXT_DIR' does not exist."
@@ -27,22 +26,22 @@ fi
 echo ">> 🧐 Inspecting Context at: $CONTEXT_DIR"
 echo "---------------------------------------------------"
 
-# 2. DEFINE FILES (Manual variables instead of associative array)
+# 2. DEFINE FILES
 PRD_FILE="$CONTEXT_DIR/prd.md"
 DESIGN_FILE="$CONTEXT_DIR/design.md"
 CONTRACT_FILE=""
-CONTRACT_TYPE=""
+CONTRACT_TYPE="None"
 
-# Search for contract (Proto takes precedence, then YAML)
+# Attempt to find contract
 if [ -n "$(find "$CONTEXT_DIR/contract" -maxdepth 1 -name '*.proto' 2>/dev/null | head -n 1)" ]; then
     CONTRACT_FILE=$(find "$CONTEXT_DIR/contract" -maxdepth 1 -name '*.proto' | head -n 1)
-    CONTRACT_TYPE="Contract (Protobuf)"
+    CONTRACT_TYPE="Protobuf"
 elif [ -n "$(find "$CONTEXT_DIR/contract" -maxdepth 1 -name '*.yaml' 2>/dev/null | head -n 1)" ]; then
     CONTRACT_FILE=$(find "$CONTEXT_DIR/contract" -maxdepth 1 -name '*.yaml' | head -n 1)
-    CONTRACT_TYPE="Contract (OpenAPI)"
+    CONTRACT_TYPE="OpenAPI"
 elif [ -n "$(find "$CONTEXT_DIR/contract" -maxdepth 1 -name '*.json' 2>/dev/null | head -n 1)" ]; then
     CONTRACT_FILE=$(find "$CONTEXT_DIR/contract" -maxdepth 1 -name '*.json' | head -n 1)
-    CONTRACT_TYPE="Contract (JSON)"
+    CONTRACT_TYPE="JSON"
 fi
 
 FAIL_COUNT=0
@@ -52,9 +51,10 @@ grade_file() {
     local file_path="$1"
     local doc_type="$2"
     
+    # CASE: File Missing
     if [ -z "$file_path" ] || [ ! -f "$file_path" ]; then
-        echo "❌ MISSING: $doc_type"
-        if [ -n "$file_path" ]; then echo "   (looked at: $file_path)"; fi
+        echo ">> ⚖️  Grading $doc_type... ❌ MISSING"
+        echo "   (Ralph will struggle without this context)"
         FAIL_COUNT=$((FAIL_COUNT+1))
         return
     fi
@@ -66,11 +66,11 @@ grade_file() {
     
     # Parse Score
     SCORE=$(echo "$GRADER_OUTPUT" | jq '.score')
+    REASON=$(echo "$GRADER_OUTPUT" | jq -r '.reasoning')
     
-    # Check if jq failed (e.g. invalid json)
+    # Check for parser failure
     if [ -z "$SCORE" ] || [ "$SCORE" = "null" ]; then
-         echo "⚠️  ERROR PARSING GRADER OUTPUT"
-         echo "Raw output: $GRADER_OUTPUT"
+         echo "⚠️  ERROR PARSING GRADER"
          FAIL_COUNT=$((FAIL_COUNT+1))
          return
     fi
@@ -79,9 +79,10 @@ grade_file() {
         echo "✅ PASS ($SCORE%)"
     else
         echo "⛔ FAIL ($SCORE%)"
-        echo "   Reason: $(echo "$GRADER_OUTPUT" | jq -r '.reasoning')"
+        echo "   Reason: $REASON"
         echo "   Critical Gaps:"
-        echo "$(echo "$GRADER_OUTPUT" | jq -r '.gaps[]' 2>/dev/null | sed 's/^/- /')"
+        # Pretty print the gaps list with bullets
+        echo "$GRADER_OUTPUT" | jq -r '.gaps[]' 2>/dev/null | sed 's/^/- /'
         echo "   ------------------------"
         FAIL_COUNT=$((FAIL_COUNT+1))
     fi
@@ -90,43 +91,55 @@ grade_file() {
 # 4. EXECUTE CHECKS
 grade_file "$PRD_FILE" "PRD"
 grade_file "$DESIGN_FILE" "Design Document"
+grade_file "$CONTRACT_FILE" "Contract ($CONTRACT_TYPE)"
 
-if [ -z "$CONTRACT_FILE" ]; then
-    echo "❌ FATAL: No API Contract found in $CONTEXT_DIR/contract/"
-    FAIL_COUNT=$((FAIL_COUNT+1))
-else
-    grade_file "$CONTRACT_FILE" "$CONTRACT_TYPE"
-fi
-
-# 5. DECISION
+# 5. THE DECISION (Soft Block)
 if [ "$FAIL_COUNT" -gt 0 ]; then
-    echo "---------------------------------------------------"
-    echo "🚫 GATEKEEPER REJECTED LAUNCH."
-    echo "   $FAIL_COUNT documents failed checks."
-    exit 1
+    echo "=================================================="
+    echo "⚠️  GATEKEEPER WARNING: $FAIL_COUNT documents failed quality checks."
+    echo "=================================================="
+    
+    # The Interactive Prompt
+    read -p ">> Do you wish to launch Ralph anyway? (y/N) " CHOICE
+    
+    if [[ ! "$CHOICE" =~ ^[Yy]$ ]]; then
+        echo ">> 🚫 Launch Aborted by User."
+        exit 1
+    fi
+    
+    echo ">> ⚠️  Overriding Gatekeeper... Proceeding with caution."
+else
+    echo "=================================================="
+    echo ">> ✅ All systems GO. Quality Threshold Met."
+    echo "=================================================="
 fi
 
 # 6. LAUNCH
-echo "---------------------------------------------------"
-echo ">> 🚀 All systems GO. Quality Threshold Met."
 echo ">> 🧬 Fusing Context..."
 
 CONTEXT_BUFFER=".ralph_context_fused.md"
 echo "# MISSION CONTEXT" > "$CONTEXT_BUFFER"
 
-echo "## PRD" >> "$CONTEXT_BUFFER"
-cat "$PRD_FILE" >> "$CONTEXT_BUFFER"
-echo -e "\n" >> "$CONTEXT_BUFFER"
+if [ -f "$PRD_FILE" ]; then
+    echo "## PRD" >> "$CONTEXT_BUFFER"
+    cat "$PRD_FILE" >> "$CONTEXT_BUFFER"
+    echo -e "\n" >> "$CONTEXT_BUFFER"
+fi
 
-echo "## DESIGN" >> "$CONTEXT_BUFFER"
-cat "$DESIGN_FILE" >> "$CONTEXT_BUFFER"
-echo -e "\n" >> "$CONTEXT_BUFFER"
+if [ -f "$DESIGN_FILE" ]; then
+    echo "## DESIGN" >> "$CONTEXT_BUFFER"
+    cat "$DESIGN_FILE" >> "$CONTEXT_BUFFER"
+    echo -e "\n" >> "$CONTEXT_BUFFER"
+fi
 
-echo "## CONTRACT" >> "$CONTEXT_BUFFER"
-cat "$CONTRACT_FILE" >> "$CONTEXT_BUFFER"
-echo -e "\n" >> "$CONTEXT_BUFFER"
+if [ -f "$CONTRACT_FILE" ]; then
+    echo "## CONTRACT" >> "$CONTEXT_BUFFER"
+    cat "$CONTRACT_FILE" >> "$CONTEXT_BUFFER"
+    echo -e "\n" >> "$CONTEXT_BUFFER"
+fi
 
-echo ">> Launching Ralph..."
-# $RALPH_LOOP "$(cat "$CONTEXT_BUFFER")"
-# For testing:
-echo "(Simulation) Ralph launched with $(wc -l < "$CONTEXT_BUFFER") lines of context."
+echo ">> 🚀 Launching Ralph..."
+echo "---------------------------------------------------"
+
+# Execute Ralph Loop
+$RALPH_LOOP "$(cat "$CONTEXT_BUFFER")"
