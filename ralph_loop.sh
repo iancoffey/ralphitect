@@ -27,7 +27,6 @@ if [ -n "$MANUAL_DIR" ]; then
     echo ">> 📂 Using specified directory: $TARGET_DIR"
 else
     # Case B: Auto-generate name from Mission Context
-    # We grep for "Project:", "Mission:", or "Feature:" to name the folder nicely
     PROJECT_NAME=$(echo "$CONTEXT" | grep -iE "^(Project|Mission|Feature|Task):" | head -n 1 | cut -d: -f2 | sed 's/[^a-zA-Z0-9]/_/g' | tr '[:upper:]' '[:lower:]' | sed 's/^_*//;s/_*$//')
     
     if [ -z "$PROJECT_NAME" ]; then
@@ -95,8 +94,8 @@ while true; do
     echo "[TURN $TURN] PROMPT: ${CURRENT_PROMPT:0:100}..." >> "$LOG_FILE"
 
     # EXECUTE CLAUDE (The Builder)
-    # We rely on the CLI's internal session state for continuity
-    RESPONSE=$(claude -p "$CURRENT_PROMPT")
+    # Added: --dangerously-skip-permissions to prevent hanging on tool use
+    RESPONSE=$(claude -p "$CURRENT_PROMPT" --dangerously-skip-permissions)
     
     echo "$RESPONSE"
     echo "---------------------------------------------------"
@@ -114,17 +113,16 @@ while true; do
         git add .
         
         # Get the diff stats for the AI to analyze
-        # We limit the diff size to avoid blowing up the context window on large files
         DIFF_CONTEXT=$(git diff --cached --stat)
         
-        # Ask Claude to write the commit message (The "Great Message" Logic)
-        # We use a separate sub-prompt so it doesn't pollute the main coding context
+        # Ask Claude to write the commit message
         COMMIT_GEN_PROMPT="Based on this git diff summary, write a single line 'Conventional Commit' message (e.g., 'feat: add retry logic' or 'fix: typo in schema'). Output ONLY the message. No quotes.
         
 DIFF SUMMARY:
 $DIFF_CONTEXT"
 
-        COMMIT_MSG=$(claude -p "$COMMIT_GEN_PROMPT")
+        # Added: --dangerously-skip-permissions here too
+        COMMIT_MSG=$(claude -p "$COMMIT_GEN_PROMPT" --dangerously-skip-permissions)
         
         # Fallback safety if Claude returns empty string or fails
         if [ -z "$COMMIT_MSG" ]; then COMMIT_MSG="wip: update (turn $TURN)"; fi
@@ -148,7 +146,8 @@ $DIFF_CONTEXT"
     echo "   [Type]  = Inject specific instructions"
     echo "   [x]     = Exit"
     
-    read -r -p ">> " USER_INPUT
+    # Added: < /dev/tty to prevent Input/output error
+    read -r -p ">> " USER_INPUT < /dev/tty
 
     if [[ "$USER_INPUT" == "x" ]]; then
         echo ">> Exiting. Repository saved at: $CURRENT_DIR"

@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package webhook.v1;
+
+option go_package = "github.com/your-org/webhook-service/pkg/api/v1;webhookv1";
+
+import "google/protobuf/timestamp.proto";
+
+// WebhookDispatcher is the service responsible for reliable event delivery.
+service WebhookDispatcher {
+  // DispatchIngest accepts an event, persists it to the queue, and returns 
+  // immediately (Async pattern).
+  // Requirement: Latency < 50ms.
+  rpc DispatchIngest(DispatchIngestRequest) returns (DispatchIngestResponse);
+
+  // GetDeliveryStatus allows clients/tests to check the state of a specific webhook.
+  // Critical for the "Definition of Done" integration tests.
+  rpc GetDeliveryStatus(GetDeliveryStatusRequest) returns (GetDeliveryStatusResponse);
+}
+
+message DispatchIngestRequest {
+  // The destination URL where the webhook should be sent.
+  string target_url = 1;
+
+  // The raw JSON payload to be delivered.
+  // Using bytes allows us to be agnostic to the JSON structure.
+  bytes payload = 2;
+
+  // The secret key used to generate the HMAC-SHA256 signature.
+  // Passed here to keep the worker stateless regarding tenant secrets.
+  string signing_secret = 3;
+
+  // Optional: Event type (e.g., "order.created") for logging/headers.
+  string event_type = 4;
+  
+  // Optional: Custom headers to include in the downstream request.
+  map<string, string> custom_headers = 5;
+}
+
+message DispatchIngestResponse {
+  // The internal UUID assigned to this delivery attempt.
+  // Used for tracking via GetDeliveryStatus.
+  string tracking_id = 1;
+
+  // Confirmation that the event was successfully persisted to Postgres.
+  bool accepted = 2;
+}
+
+message GetDeliveryStatusRequest {
+  string tracking_id = 1;
+}
+
+message GetDeliveryStatusResponse {
+  string tracking_id = 1;
+  
+  // Maps to the DB status: PENDING, PROCESSING, COMPLETED, FAILED, DEAD
+  string status = 2;
+  
+  // How many times we have tried to deliver this so far.
+  int32 attempt_count = 3;
+  
+  // The last HTTP status code received (e.g., 500, 200). 
+  int32 last_http_code = 4;
+  
+  // When the next retry is scheduled (if status is FAILED/PENDING).
+  google.protobuf.Timestamp next_attempt_at = 5;
+}

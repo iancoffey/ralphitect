@@ -1,0 +1,38 @@
+{
+  "feature_name": "Reliable Webhook Delivery Service",
+  "objective": "Build a dedicated microservice responsible for delivering event notifications to external customer endpoints with at-least-once delivery guarantees, exponential backoff, and strict idempotency, supporting 5,000 events/second with <50ms ingestion latency",
+  "user_stories": [
+    "As an API User, I want to register a URL endpoint so that I can receive JSON payloads when order.created events occur",
+    "As a Developer, I want the system to retry failed deliveries (HTTP 5xx) automatically so that transient network issues don't cause data loss",
+    "As a Security Engineer, I want all webhook payloads to be signed (HMAC-SHA256) so that customers can verify the sender identity"
+  ],
+  "technical_constraints": [
+    "Language: Golang 1.22+",
+    "Database: Postgres with pgx driver",
+    "Queue: Postgres-backed transactional outbox pattern via delivery_attempts table",
+    "Communication: gRPC for ingestion from API service",
+    "Architecture: Transactional Outbox pattern with worker pool for delivery",
+    "Security: HMAC-SHA256 signatures in X-Signature-256 header, X-Request-Timestamp for replay attack prevention",
+    "Retry Strategy: Exponential backoff (2s, 4s, 8s, 16s, 32s) with max 5 retries",
+    "Performance: Ingestion acknowledgement <50ms, throughput 5,000 events/second",
+    "Observability: Prometheus metrics for delivery_attempts, success_rate, dead_letter_queue_depth",
+    "Status States: PENDING, PROCESSING, COMPLETED, FAILED, DEAD",
+    "Index Strategy: idx_processing on (status, next_attempt_at) for PENDING and FAILED states"
+  ],
+  "api_contract": "{\n  \"grpc_ingestion\": {\n    \"service\": \"WebhookService\",\n    \"method\": \"EnqueueEvent\",\n    \"request\": {\n      \"event_payload\": \"json_object\",\n      \"target_url\": \"string\",\n      \"event_type\": \"string (e.g., order.created)\"\n    },\n    \"response\": {\n      \"delivery_id\": \"uuid\",\n      \"status\": \"PENDING\",\n      \"acknowledged_at\": \"timestamp\"\n    }\n  },\n  \"http_delivery\": {\n    \"method\": \"POST\",\n    \"headers\": {\n      \"Content-Type\": \"application/json\",\n      \"X-Signature-256\": \"hmac_sha256_hex\",\n      \"X-Request-Timestamp\": \"unix_timestamp\"\n    },\n    \"body\": \"event_payload (JSONB)\"\n  },\n  \"database_schema\": {\n    \"table\": \"delivery_attempts\",\n    \"columns\": {\n      \"id\": \"UUID PRIMARY KEY\",\n      \"event_payload\": \"JSONB NOT NULL\",\n      \"target_url\": \"TEXT NOT NULL\",\n      \"status\": \"VARCHAR(20) DEFAULT 'PENDING'\",\n      \"attempt_count\": \"INT DEFAULT 0\",\n      \"next_attempt_at\": \"TIMESTAMP WITH TIME ZONE DEFAULT NOW()\",\n      \"created_at\": \"TIMESTAMP DEFAULT NOW()\"\n    }\n  },\n  \"retry_schedule\": [\"2s\", \"4s\", \"8s\", \"16s\", \"32s\"],\n  \"http_error_handling\": {\n    \"5xx\": \"retry with exponential backoff\",\n    \"4xx\": \"move to DEAD status (no retry)\",\n    \"timeout\": \"treat as retryable failure\",\n    \"network_error\": \"treat as retryable failure\"\n  }\n}",
+  "definition_of_done": [
+    "Unit tests coverage > 85%",
+    "Integration test simulating a flaky receiver (fails 3 times, succeeds on 4th)",
+    "Load test verifying 5k/sec throughput without memory leaks",
+    "gRPC service implemented with EnqueueEvent method returning delivery_id within 50ms",
+    "Postgres delivery_attempts table created with idx_processing index",
+    "Worker pool implemented with exponential backoff retry logic (2s, 4s, 8s, 16s, 32s)",
+    "HMAC-SHA256 signature generation and X-Signature-256 header implementation",
+    "X-Request-Timestamp header added to all outbound webhook requests",
+    "Prometheus metrics exposed: delivery_attempts (counter), success_rate (gauge), dead_letter_queue_depth (gauge)",
+    "Status transitions implemented: PENDING -> PROCESSING -> COMPLETED/FAILED -> DEAD (after 5 failures)",
+    "4xx HTTP responses move delivery to DEAD status without retry",
+    "5xx HTTP responses and network errors trigger exponential backoff retry",
+    "Idempotency guarantees verified through duplicate delivery prevention tests"
+  ]
+}
