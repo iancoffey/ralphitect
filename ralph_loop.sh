@@ -1,85 +1,163 @@
 #!/bin/bash
 
 # ===================================================
-# ♾️  RALPH LOOP: EXPLICIT STATE TRACKING
+# ♾️  RALPH LOOP: AUTONOMOUS BUILDER (Git-Backed)
 # ===================================================
 
 CONTEXT="$1"
+MANUAL_DIR="$2"
 LOG_FILE="ralph_session.log"
 
+# 1. INPUT VALIDATION
 if [ -z "$CONTEXT" ]; then
-    echo "❌ Error: Context missing."
+    echo "❌ Error: Context (Arg 1) is missing."
+    echo "Usage: ./bin/ralph_loop.sh <context_string> [optional_target_dir]"
     exit 1
 fi
 
-# 1. INITIALIZATION
-# We wipe the log to start fresh for this run
-echo "--- NEW MISSION STARTED: $(date) ---" > "$LOG_FILE"
+if ! command -v claude &> /dev/null; then
+    echo "❌ Error: 'claude' CLI not found. (npm install -g @anthropic-ai/claude-code)"
+    exit 1
+fi
 
-echo "==================================================="
-echo "       ♾️  RALPH LOOP (ITERATION 0)"
-echo "==================================================="
-echo ">> Seeding Mission Context..."
+# 2. WORKSPACE RESOLUTION
+if [ -n "$MANUAL_DIR" ]; then
+    # Case A: User provided a specific path
+    TARGET_DIR="$MANUAL_DIR"
+    echo ">> 📂 Using specified directory: $TARGET_DIR"
+else
+    # Case B: Auto-generate name from Mission Context
+    # We grep for "Project:", "Mission:", or "Feature:" to name the folder nicely
+    PROJECT_NAME=$(echo "$CONTEXT" | grep -iE "^(Project|Mission|Feature|Task):" | head -n 1 | cut -d: -f2 | sed 's/[^a-zA-Z0-9]/_/g' | tr '[:upper:]' '[:lower:]' | sed 's/^_*//;s/_*$//')
+    
+    if [ -z "$PROJECT_NAME" ]; then
+        TARGET_DIR="ralph_mission_$(date +%Y%m%d_%H%M%S)"
+    else
+        TARGET_DIR="ralph_${PROJECT_NAME}"
+    fi
+    echo ">> 📂 Auto-created workspace: ./$TARGET_DIR"
+fi
 
-# The First Prompt is the massive "God Context"
+# Create and Enter Workspace
+mkdir -p "$TARGET_DIR"
+cd "$TARGET_DIR" || exit 1
+CURRENT_DIR=$(pwd)
+
+# 3. GIT INITIALIZATION (The Safety Net)
+if [ ! -d ".git" ]; then
+    echo ">> 🛡️  Initializing Git Repository..."
+    git init -q
+    
+    # Create a sensible .gitignore
+    if [ ! -f ".gitignore" ]; then
+        cat <<EOF > .gitignore
+.DS_Store
+node_modules/
+__pycache__/
+*.log
+.env
+EOF
+    fi
+    
+    git add .gitignore
+    git commit -m "chore: project initialization" -q
+else
+    echo ">> 🛡️  Git Repository detected. Changes will be tracked."
+fi
+
+# 4. START SESSION
+echo "--- MISSION START: $(date) ---" >> "$LOG_FILE"
+echo "==================================================="
+echo "       ♾️  RALPH LOOP (Workspace: $(basename "$CURRENT_DIR"))"
+echo "==================================================="
+
+# The "God Context" - This is the Seed
 CURRENT_PROMPT="
 MISSION CONTEXT:
 $CONTEXT
 
 INSTRUCTIONS:
-1. You are Ralph, a Principal Engineer.
+1. You are Ralph, a Senior Engineer.
 2. INTERNALIZE this context.
-3. Output your plan for step 1.
+3. You are working in: $CURRENT_DIR
+4. Output your plan for step 1.
 "
 
 TURN=1
 
-# 2. THE LOOP
+# 5. THE INFINITE LOOP
 while true; do
     echo "---------------------------------------------------"
-    echo ">> 🤖 Ralph is thinking (Turn $TURN)..."
+    echo ">> 🤖 Ralph is working (Turn $TURN)..."
     echo "---------------------------------------------------"
-
-    # Log what we are sending (for debugging)
+    
+    # Log Prompt
     echo "[TURN $TURN] PROMPT: ${CURRENT_PROMPT:0:100}..." >> "$LOG_FILE"
 
-    # EXECUTE CLAUDE
-    # -p sends the prompt
-    # We rely on the CLI's internal session persistence for context,
-    # but we control the *incremental* prompt here.
+    # EXECUTE CLAUDE (The Builder)
+    # We rely on the CLI's internal session state for continuity
     RESPONSE=$(claude -p "$CURRENT_PROMPT")
     
-    # Check if Claude actually ran or failed
-    if [ $? -ne 0 ]; then
-        echo "❌ Error: Claude CLI failed. Check your login status."
-        exit 1
-    fi
-
     echo "$RESPONSE"
     echo "---------------------------------------------------"
-    
-    # Log the response
     echo "[TURN $TURN] RESPONSE: $RESPONSE" >> "$LOG_FILE"
 
-    # 3. HUMAN FEEDBACK LAYER
+    # ===================================================
+    # 🧠 INTELLIGENT AUTO-COMMIT
+    # ===================================================
+    
+    # Check for uncommitted changes (staged or unstaged)
+    if [ -n "$(git status --porcelain)" ]; then
+        echo ">> 💾 Changes detected. Generating smart commit message..."
+        
+        # Stage all changes
+        git add .
+        
+        # Get the diff stats for the AI to analyze
+        # We limit the diff size to avoid blowing up the context window on large files
+        DIFF_CONTEXT=$(git diff --cached --stat)
+        
+        # Ask Claude to write the commit message (The "Great Message" Logic)
+        # We use a separate sub-prompt so it doesn't pollute the main coding context
+        COMMIT_GEN_PROMPT="Based on this git diff summary, write a single line 'Conventional Commit' message (e.g., 'feat: add retry logic' or 'fix: typo in schema'). Output ONLY the message. No quotes.
+        
+DIFF SUMMARY:
+$DIFF_CONTEXT"
+
+        COMMIT_MSG=$(claude -p "$COMMIT_GEN_PROMPT")
+        
+        # Fallback safety if Claude returns empty string or fails
+        if [ -z "$COMMIT_MSG" ]; then COMMIT_MSG="wip: update (turn $TURN)"; fi
+        
+        # Clean up any potential quotes output by the LLM
+        COMMIT_MSG=$(echo "$COMMIT_MSG" | tr -d '"' | tr -d "'")
+
+        # Execute Commit
+        git commit -m "$COMMIT_MSG" -q
+        
+        echo "   ✅ Git Commit: $COMMIT_MSG"
+    else
+        echo ">> (No file changes this turn)"
+    fi
+
+    # ===================================================
+
+    # HUMAN COMMAND CENTER
     echo ">> 🎤 COMMAND CENTER (Turn $TURN):"
-    echo "   [Enter] = 'Proceed / Continue' (Auto-Approval)"
-    echo "   [Type]  = Inject new constraints or feedback"
-    echo "   [x]     = Exit Mission"
+    echo "   [Enter] = 'Proceed / Verify' (Auto-Pilot)"
+    echo "   [Type]  = Inject specific instructions"
+    echo "   [x]     = Exit"
     
     read -r -p ">> " USER_INPUT
 
     if [[ "$USER_INPUT" == "x" ]]; then
-        echo ">> Exiting Ralph Loop. Session log saved to $LOG_FILE"
+        echo ">> Exiting. Repository saved at: $CURRENT_DIR"
         exit 0
     elif [[ -z "$USER_INPUT" ]]; then
-        # The user hit Enter. The prompt becomes a generic "Go ahead"
-        CURRENT_PROMPT="Proceed with the next step. Execute and verify."
+        CURRENT_PROMPT="Proceed. Verify your last step or move to the next."
     else
-        # The user gave specific instructions.
         CURRENT_PROMPT="$USER_INPUT"
     fi
     
-    # Iterate
     ((TURN++))
 done
