@@ -1,161 +1,119 @@
 #!/bin/bash
 
 # ===================================================
-# ♾️  RALPH LOOP: AUTONOMOUS BUILDER (Git-Backed)
+# 🛡️  RALPH LOOP: HARDENED EXECUTOR
 # ===================================================
 
 CONTEXT="$1"
 MANUAL_DIR="$2"
 LOG_FILE="ralph_session.log"
 
-# 1. INPUT VALIDATION
-if [ -z "$CONTEXT" ]; then
-    echo "❌ Error: Context (Arg 1) is missing."
-    echo "Usage: ./bin/ralph_loop.sh <context_string> [optional_target_dir]"
-    exit 1
-fi
+# 1. ROBUST PATH RESOLUTION
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CWD="$(pwd)"
 
-if ! command -v claude &> /dev/null; then
-    echo "❌ Error: 'claude' CLI not found. (npm install -g @anthropic-ai/claude-code)"
-    exit 1
-fi
+POSSIBLE_CONFIGS=(
+    "$CWD/config/ralph-strict.json"
+    "$(dirname "$SCRIPT_DIR")/config/ralph-strict.json"
+    "$SCRIPT_DIR/config/ralph-strict.json"
+)
 
-# 2. WORKSPACE RESOLUTION
+STRICT_CONFIG=""
+for config in "${POSSIBLE_CONFIGS[@]}"; do
+    if [ -f "$config" ]; then STRICT_CONFIG="$config"; break; fi
+done
+
+# 2. INPUT VALIDATION
+if [ -z "$CONTEXT" ]; then echo "❌ Error: Context missing."; exit 1; fi
+
+# 3. WORKSPACE RESOLUTION
 if [ -n "$MANUAL_DIR" ]; then
-    # Case A: User provided a specific path
     TARGET_DIR="$MANUAL_DIR"
-    echo ">> 📂 Using specified directory: $TARGET_DIR"
 else
-    # Case B: Auto-generate name from Mission Context
     PROJECT_NAME=$(echo "$CONTEXT" | grep -iE "^(Project|Mission|Feature|Task):" | head -n 1 | cut -d: -f2 | sed 's/[^a-zA-Z0-9]/_/g' | tr '[:upper:]' '[:lower:]' | sed 's/^_*//;s/_*$//')
-    
-    if [ -z "$PROJECT_NAME" ]; then
-        TARGET_DIR="ralph_mission_$(date +%Y%m%d_%H%M%S)"
-    else
-        TARGET_DIR="ralph_${PROJECT_NAME}"
-    fi
-    echo ">> 📂 Auto-created workspace: ./$TARGET_DIR"
+    [ -z "$PROJECT_NAME" ] && TARGET_DIR="ralph_mission_$(date +%Y%m%d_%H%M%S)" || TARGET_DIR="ralph_${PROJECT_NAME}"
 fi
-
-# Create and Enter Workspace
+echo ">> 📂 Workspace: ./$TARGET_DIR"
 mkdir -p "$TARGET_DIR"
-cd "$TARGET_DIR" || exit 1
-CURRENT_DIR=$(pwd)
 
-# 3. GIT INITIALIZATION (The Safety Net)
-if [ ! -d ".git" ]; then
-    echo ">> 🛡️  Initializing Git Repository..."
-    git init -q
-    
-    # Create a sensible .gitignore
-    if [ ! -f ".gitignore" ]; then
-        cat <<EOF > .gitignore
-.DS_Store
-node_modules/
-__pycache__/
-*.log
-.env
-EOF
-    fi
-    
-    git add .gitignore
-    git commit -m "chore: project initialization" -q
+# 4. CONFIG INJECTION
+if [ -n "$STRICT_CONFIG" ]; then
+    cp "$STRICT_CONFIG" "$TARGET_DIR/claude.json"
 else
-    echo ">> 🛡️  Git Repository detected. Changes will be tracked."
+    echo "❌ FATAL: Config not found."; exit 1
 fi
 
-# 4. START SESSION
-echo "--- MISSION START: $(date) ---" >> "$LOG_FILE"
-echo "==================================================="
-echo "       ♾️  RALPH LOOP (Workspace: $(basename "$CURRENT_DIR"))"
-echo "==================================================="
+# 5. CONTEXT FUSION
+README_PATH="$TARGET_DIR/README.md"
+if [ -f "$README_PATH" ]; then
+    PROJECT_CONTEXT=$(cat "$README_PATH")
+else
+    PROJECT_CONTEXT="(New Project)"
+fi
 
-# The "God Context" - This is the Seed
+cd "$TARGET_DIR" || exit 1
+
+# 6. GIT INIT
+if [ ! -d ".git" ]; then
+    git init -q
+    [ ! -f ".gitignore" ] && echo -e ".DS_Store\nnode_modules/\n*.log\nclaude.json" > .gitignore
+    git add .gitignore
+    git commit -m "chore: init" -q
+fi
+
+# 7. START LOOP
+# We use a strict "System Prompt" style to force execution.
 CURRENT_PROMPT="
-MISSION CONTEXT:
+MISSION:
 $CONTEXT
 
-INSTRUCTIONS:
-1. You are Ralph, a Senior Engineer.
-2. INTERNALIZE this context.
-3. You are working in: $CURRENT_DIR
-4. Output your plan for step 1.
+STATE (README):
+$PROJECT_CONTEXT
+
+SYSTEM INSTRUCTIONS:
+1. You are Ralph (Senior Engineer).
+2. You are in 'NON-INTERACTIVE EXECUTION MODE'.
+3. DO NOT ask 'What would you like to do?'.
+4. DO NOT ask 'Shall I proceed?'.
+5. IMMEDIATELY GENERATE CODE or RUN COMMANDS to complete the next step in the README.
+6. If the README is missing/empty, create it with a Todo list immediately.
+7. Output your plan for step 1.
 "
 
 TURN=1
 
-# 5. THE INFINITE LOOP
 while true; do
     echo "---------------------------------------------------"
-    echo ">> 🤖 Ralph is working (Turn $TURN)..."
+    echo ">> 🤖 Ralph (Turn $TURN)..."
     echo "---------------------------------------------------"
-    
-    # Log Prompt
-    echo "[TURN $TURN] PROMPT: ${CURRENT_PROMPT:0:100}..." >> "$LOG_FILE"
+    echo "[TURN $TURN] PROMPT: ${CURRENT_PROMPT:0:50}..." >> "$LOG_FILE"
 
-    # EXECUTE CLAUDE (The Builder)
-    # Added: --dangerously-skip-permissions to prevent hanging on tool use
     RESPONSE=$(claude -p "$CURRENT_PROMPT" --dangerously-skip-permissions)
     
     echo "$RESPONSE"
     echo "---------------------------------------------------"
     echo "[TURN $TURN] RESPONSE: $RESPONSE" >> "$LOG_FILE"
 
-    # ===================================================
-    # 🧠 INTELLIGENT AUTO-COMMIT
-    # ===================================================
-    
-    # Check for uncommitted changes (staged or unstaged)
     if [ -n "$(git status --porcelain)" ]; then
-        echo ">> 💾 Changes detected. Generating smart commit message..."
-        
-        # Stage all changes
+        echo ">> 💾 Committing..."
         git add .
-        
-        # Get the diff stats for the AI to analyze
-        DIFF_CONTEXT=$(git diff --cached --stat)
-        
-        # Ask Claude to write the commit message
-        COMMIT_GEN_PROMPT="Based on this git diff summary, write a single line 'Conventional Commit' message (e.g., 'feat: add retry logic' or 'fix: typo in schema'). Output ONLY the message. No quotes.
-        
-DIFF SUMMARY:
-$DIFF_CONTEXT"
-
-        # Added: --dangerously-skip-permissions here too
-        COMMIT_MSG=$(claude -p "$COMMIT_GEN_PROMPT" --dangerously-skip-permissions)
-        
-        # Fallback safety if Claude returns empty string or fails
-        if [ -z "$COMMIT_MSG" ]; then COMMIT_MSG="wip: update (turn $TURN)"; fi
-        
-        # Clean up any potential quotes output by the LLM
-        COMMIT_MSG=$(echo "$COMMIT_MSG" | tr -d '"' | tr -d "'")
-
-        # Execute Commit
-        git commit -m "$COMMIT_MSG" -q
-        
-        echo "   ✅ Git Commit: $COMMIT_MSG"
-    else
-        echo ">> (No file changes this turn)"
+        DIFF=$(git diff --cached --stat)
+        MSG=$(claude -p "Commit msg for:\n$DIFF" --dangerously-skip-permissions 2>/dev/null)
+        [ -z "$MSG" ] && MSG="wip: turn $TURN"
+        MSG=$(echo "$MSG" | tr -d '"')
+        git commit -m "$MSG" -q
+        echo "   ✅ $MSG"
     fi
 
-    # ===================================================
-
-    # HUMAN COMMAND CENTER
-    echo ">> 🎤 COMMAND CENTER (Turn $TURN):"
-    echo "   [Enter] = 'Proceed / Verify' (Auto-Pilot)"
-    echo "   [Type]  = Inject specific instructions"
-    echo "   [x]     = Exit"
-    
-    # Added: < /dev/tty to prevent Input/output error
+    echo ">> 🎤 COMMAND CENTER:"
     read -r -p ">> " USER_INPUT < /dev/tty
 
-    if [[ "$USER_INPUT" == "x" ]]; then
-        echo ">> Exiting. Repository saved at: $CURRENT_DIR"
-        exit 0
-    elif [[ -z "$USER_INPUT" ]]; then
-        CURRENT_PROMPT="Proceed. Verify your last step or move to the next."
-    else
+    if [[ "$USER_INPUT" == "x" ]]; then exit 0; fi
+    # CRITICAL: If user just hits enter, we tell Ralph to KEEP GOING.
+    if [[ -n "$USER_INPUT" ]]; then 
         CURRENT_PROMPT="$USER_INPUT"
+    else 
+        CURRENT_PROMPT="STATUS UPDATE: Previous step completed. Check README for next TODO item and EXECUTE IT IMMEDIATELY. Do not ask for permission."
     fi
     
     ((TURN++))

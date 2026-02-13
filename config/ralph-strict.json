@@ -1,7 +1,8 @@
 {
   "sandbox": {
     "enabled": true,
-    "mode": "auto-allow",
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
     "filesystem": {
       "denyWrite": ["/"],
       "allowWrite": ["${cwd}"]
@@ -25,7 +26,21 @@
         "mkdir",
         "rm",
         "touch",
-        "pwd"
+        "pwd",
+        "grep",
+        "find",
+        "echo",
+        "printf",
+        "cp",
+        "mv",
+        "sed",
+        "awk",
+        "tee",
+        "head",
+        "tail",
+        "chmod",
+        "bash",
+        "sh"
       ]
     }
   },
