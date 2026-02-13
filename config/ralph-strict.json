@@ -1,0 +1,34 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "mode": "auto-allow",
+    "filesystem": {
+      "denyWrite": ["/"],
+      "allowWrite": ["${cwd}"]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "proxy.golang.org",
+        "sum.golang.org",
+        "objects.githubusercontent.com"
+      ]
+    },
+    "commands": {
+      "allowed": [
+        "go",
+        "git",
+        "make",
+        "ls",
+        "cat",
+        "mkdir",
+        "rm",
+        "touch",
+        "pwd"
+      ]
+    }
+  },
+  "autoUpdater": { "enabled": false },
+  "telemetry": { "enabled": false }
+}

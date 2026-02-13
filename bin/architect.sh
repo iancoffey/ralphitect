@@ -8,6 +8,19 @@
 THRESHOLD=80
 GRADER_SCRIPT="lib/grader.py"
 RALPH_LOOP="./ralph_loop.sh"
+CACHE_DIR=".architect_cache"
+
+# Ensure cache directory exists
+mkdir -p "$CACHE_DIR"
+
+# Helper: Cross-platform SHA256
+function get_file_hash() {
+    if command -v shasum &> /dev/null; then
+        shasum -a 256 "$1" | awk '{print $1}' # macOS
+    else
+        sha256sum "$1" | awk '{print $1}'     # Linux
+    fi
+}
 
 # 1. ARGUMENT PARSING
 if [ -z "$1" ]; then
@@ -60,9 +73,33 @@ grade_file() {
     fi
 
     echo -n ">> ⚖️  Grading $doc_type... "
-    
-    # Call Python Grader
-    GRADER_OUTPUT=$(python3 "$GRADER_SCRIPT" "$file_path" "$doc_type")
+
+    # --- CACHING LOGIC START ---
+    local safe_name=$(basename "$file_path" | sed 's/[^a-zA-Z0-9]/_/g')
+    local hash_file="$CACHE_DIR/${safe_name}.sha"
+    local result_file="$CACHE_DIR/${safe_name}.json"
+    local current_hash=$(get_file_hash "$file_path")
+    local use_cache=false
+
+    if [ -f "$hash_file" ] && [ -f "$result_file" ]; then
+        local cached_hash=$(cat "$hash_file")
+        if [ "$current_hash" == "$cached_hash" ]; then
+            use_cache=true
+        fi
+    fi
+
+    if [ "$use_cache" = true ]; then
+        echo -n "(Cached) "
+        GRADER_OUTPUT=$(cat "$result_file")
+    else
+        # Call Python Grader
+        GRADER_OUTPUT=$(python3 "$GRADER_SCRIPT" "$file_path" "$doc_type")
+        
+        # Write to Cache
+        echo "$GRADER_OUTPUT" > "$result_file"
+        echo "$current_hash" > "$hash_file"
+    fi
+    # --- CACHING LOGIC END ---
     
     # Parse Score
     SCORE=$(echo "$GRADER_OUTPUT" | jq '.score')
